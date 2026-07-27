@@ -13,6 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 FIGS = ROOT / "docs/figs"
 OUT = ROOT / "docs/casestudy.html"
+INDEX = ROOT / "docs/index.html"
 
 
 def img64(name):
@@ -219,7 +220,25 @@ def main():
         fig_c5=img64("C5-operating-curves.png"),
     )
     OUT.write_text(html, encoding="utf-8")
+    INDEX.write_text(
+        """<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="0; url=casestudy.html">
+  <link rel="canonical" href="casestudy.html">
+  <title>Bearing Diagnostics Case Study</title>
+</head>
+<body>
+  <p><a href="casestudy.html">軸受診断ケーススタディを開く</a></p>
+</body>
+</html>
+""",
+        encoding="utf-8",
+    )
     print(f"wrote {OUT.name}: {OUT.stat().st_size / 1e6:.2f} MB")
+    print(f"wrote {INDEX.name}: redirect to {OUT.name}")
 
 
 if __name__ == "__main__":
