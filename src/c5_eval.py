@@ -47,27 +47,32 @@ def compute_ch24():
         dat = np.loadtxt(f)
         day = (datetime.strptime(f.name, "%Y.%m.%d.%H.%M.%S") - t0).total_seconds() / 86400
         row = [day]
-        for ch in (1, 3):                     # ch2, ch4 (0-index)
+        for ch in (1, 2, 3):                  # ch2, ch3, ch4 (0-index)
             x = dat[:, ch]
             if rms(x) < RMS_FLOOR:
-                row += [np.nan, np.nan, np.nan]
+                row += [np.nan, np.nan] + ([] if ch == 2 else [np.nan])
                 continue
             x = x - x.mean()
             X = np.fft.rfft(x)
             lf, _, pos = line_over_floor(env_amp_from_mask(X, keep))
+            row += [lf, pos]
+            if ch == 2:                       # ch3 は max-channel 比較用に回顧系列のみ
+                continue
             kurts = [kurtosis(np.fft.irfft(np.where((freqs >= lo) & (freqs < lo + 1000.0), X, 0.0),
                                            n=20480)) for lo in CAUSAL_LOS]
             recent[ch].append(float(CAUSAL_LOS[int(np.argmax(kurts))]))
             lo_used = float(np.median(recent[ch][-5:]))
             m = (freqs >= lo_used) & (freqs < lo_used + 1000.0)
             clf, _, _ = line_over_floor(env_amp_from_mask(X, m))
-            row += [lf, pos, clf]
+            row += [clf]
         rows.append(row)
         if (i + 1) % 200 == 0:
             print(f"{i + 1}/{len(files)}", flush=True)
     arr = np.array(rows)
-    np.savez(CACHE24, days=arr[:, 0], lf_ch2=arr[:, 1], pos_ch2=arr[:, 2], clf_ch2=arr[:, 3],
-             lf_ch4=arr[:, 4], pos_ch4=arr[:, 5], clf_ch4=arr[:, 6])
+    np.savez(CACHE24, days=arr[:, 0],
+             lf_ch2=arr[:, 1], pos_ch2=arr[:, 2], clf_ch2=arr[:, 3],
+             lf_ch3=arr[:, 4], pos_ch3=arr[:, 5],
+             lf_ch4=arr[:, 6], pos_ch4=arr[:, 7], clf_ch4=arr[:, 8])
     print("cached:", CACHE24.name)
 
 
@@ -133,10 +138,12 @@ def fli_cluster_days(days, pos, m):
 def redesign_report(d, t_fail, z4, z24):
     """レビュー指摘(2026-07-27)を受けた再現実装:
     再設計1: FLI-v2 = 236±1bin アンカーの3点連続ロック AND 線/床ゲート(+5σ)。
-    再設計2: max-channel 帰属規則 = 自chの線/床が比較ch中最大のときのみ発報。
-    注意: いずれも回顧帯域(lookahead あり)の系列で評価。ch3 は未計算のため
-    比較は B1/B2/B4 の3ch。結果は本 run に限る観測であり一般化しない。"""
-    lf = {"B1": z4["retro_lf"], "B2": z24["lf_ch2"], "B4": z24["lf_ch4"]}
+    再設計2: max-channel 帰属規則 = 自chの線/床が全4ch中最大のときのみ発報。
+    合成   : FLI-v2 AND max-channel(2層を実際に合成した検出器)。
+    注意: いずれも回顧帯域(lookahead あり)の系列で評価。比較スタックは全4ch。
+    誤報統計の対象は B2/B4 — B3 は壊れていないが健全期から異常シグネチャを持つ
+    個体のため統計から除外(C1/C2 に記録、開示済み)。結果は本 run に限る観測。"""
+    lf = {"B1": z4["retro_lf"], "B2": z24["lf_ch2"], "B3": z24["lf_ch3"], "B4": z24["lf_ch4"]}
     pos = {"B1": z4["retro_pos"], "B2": z24["pos_ch2"], "B4": z24["pos_ch4"]}
     thr = {}
     for c, y in lf.items():
@@ -164,24 +171,55 @@ def redesign_report(d, t_fail, z4, z24):
             print(f"  {c}: clusters {int(st.sum())} (early<4.5d {int((cd < 4.5).sum())}"
                   f" / late {int((cd >= 4.5).sum())})")
 
-    print("\n== redesign 2: max-channel attribution on env retro lf (k=5) ==")
-    stack = np.vstack([np.where(np.isfinite(lf[c]), lf[c], -np.inf) for c in ("B1", "B2", "B4")])
-    for ci, c in enumerate(("B1", "B2", "B4")):
+    order = ("B1", "B2", "B3", "B4")
+    stack = np.vstack([np.where(np.isfinite(lf[c]), lf[c], -np.inf) for c in order])
+    argmax = np.nanargmax(stack, axis=0)
+
+    print("\n== redesign 2: max-channel attribution on env retro lf (k=5, all 4 ch) ==")
+    for c in ("B1", "B2", "B4"):
         y = lf[c]
         over = np.where(np.isfinite(y), y > thr[c], False)
-        is_max = np.nanargmax(stack, axis=0) == ci
+        is_max = argmax == order.index(c)
         fire3 = over[:-2] & over[1:-1] & over[2:] & is_max[:-2] & is_max[1:-1] & is_max[2:]
         if c == "B1":
             idx = np.where(fire3)[0]
             td = float(d[idx[0] + 2]) if idx.size else None
             lead = t_fail - td if td is not None else float("nan")
-            print(f"  B1: confirm day {td:.3f}  lead {lead:.3f} d (unchanged by rule)" if td is not None
+            print(f"  B1: confirm day {td:.3f}  lead {lead:.3f} d" if td is not None
                   else "  B1: no detection")
         else:
             st = fire3 & ~np.concatenate([[False], fire3[:-1]])
             cd = d[: len(st)][st]
             print(f"  {c}: clusters {int(st.sum())} (early {int((cd < 4.5).sum())}"
                   f" / late {int((cd >= 4.5).sum())})")
+
+    for label, persist in (("v1: single-point gate&max, lock run>=3", False),
+                           ("v2: 3-consecutive on full condition", True)):
+        print(f"\n== composed detector FLI-v2 AND max-channel ({label}, k=5, all 4 ch) ==")
+        for c in ("B1", "B2", "B4"):
+            anchored = np.where(np.isfinite(pos[c]), np.abs(pos[c] - 236.0) <= 1.0, False)
+            runs = np.zeros(len(d), dtype=int)
+            r = 0
+            for i, a in enumerate(anchored):
+                r = r + 1 if a else 0
+                runs[i] = r
+            gate = np.where(np.isfinite(lf[c]), lf[c] > thr[c], False)
+            cond = (runs >= 3) & gate & (argmax == order.index(c))
+            if persist:
+                fire = np.concatenate([[False, False], cond[:-2] & cond[1:-1] & cond[2:]])
+            else:
+                fire = cond
+            if c == "B1":
+                idx = np.where(fire)[0]
+                td = float(d[idx[0]]) if idx.size else None
+                lead = t_fail - td if td is not None else float("nan")
+                print(f"  B1: confirm day {td:.3f}  lead {lead:.3f} d" if td is not None
+                      else "  B1: no detection")
+            else:
+                st = fire & ~np.concatenate([[False], fire[:-1]])
+                cd = d[st]
+                print(f"  {c}: clusters {int(st.sum())} (early {int((cd < 4.5).sum())}"
+                      f" / late {int((cd >= 4.5).sum())})")
 
 
 def main():
