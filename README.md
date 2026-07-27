@@ -24,6 +24,7 @@
 
 ## 記録
 
+- **`docs/casestudy.html`** — ケーススタディ本体(自己完結・図埋め込み)
 - `scheme.md` — 設計判断ログ(Built / Observed / Decision / Consequence)
 - `docs/C*-*.md` — 各ステージの数式・図・コード対応の学習文書
 - `data/` — 生データ(gitignore、出典と検分結果は docs 側に記録)

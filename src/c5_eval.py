@@ -32,10 +32,16 @@ MS = range(3, 9)
 
 
 def compute_ch24():
+    """ch2/ch4 の回顧帯域 (3-6.5kHz) と因果帯域 (各ch独立の帯域内尖度スキャン
+    + 直近5点中央値) の両方でエンベロープ線/床・ピーク位置を計算する。
+    (旧版は回顧帯域のみで、因果検出器の誤報評価に流用していた -> レビュー指摘で修正)"""
+    from c4_trend import CAUSAL_LOS
+    from lib.indicators import kurtosis
     files = sorted((ROOT / "data/ims/2nd_test").iterdir())
     t0 = datetime.strptime(files[0].name, "%Y.%m.%d.%H.%M.%S")
     freqs = np.fft.rfftfreq(20480, d=1.0 / FS)
     keep = (freqs >= RETRO_BAND[0]) & (freqs <= RETRO_BAND[1])
+    recent = {1: [], 3: []}
     rows = []
     for i, f in enumerate(files):
         dat = np.loadtxt(f)
@@ -44,26 +50,36 @@ def compute_ch24():
         for ch in (1, 3):                     # ch2, ch4 (0-index)
             x = dat[:, ch]
             if rms(x) < RMS_FLOOR:
-                row += [np.nan, np.nan]
+                row += [np.nan, np.nan, np.nan]
                 continue
             x = x - x.mean()
-            lf, _, pos = line_over_floor(env_amp_from_mask(np.fft.rfft(x), keep))
-            row += [lf, pos]
+            X = np.fft.rfft(x)
+            lf, _, pos = line_over_floor(env_amp_from_mask(X, keep))
+            kurts = [kurtosis(np.fft.irfft(np.where((freqs >= lo) & (freqs < lo + 1000.0), X, 0.0),
+                                           n=20480)) for lo in CAUSAL_LOS]
+            recent[ch].append(float(CAUSAL_LOS[int(np.argmax(kurts))]))
+            lo_used = float(np.median(recent[ch][-5:]))
+            m = (freqs >= lo_used) & (freqs < lo_used + 1000.0)
+            clf, _, _ = line_over_floor(env_amp_from_mask(X, m))
+            row += [lf, pos, clf]
         rows.append(row)
         if (i + 1) % 200 == 0:
             print(f"{i + 1}/{len(files)}", flush=True)
     arr = np.array(rows)
-    np.savez(CACHE24, days=arr[:, 0], lf_ch2=arr[:, 1], pos_ch2=arr[:, 2],
-             lf_ch4=arr[:, 3], pos_ch4=arr[:, 4])
+    np.savez(CACHE24, days=arr[:, 0], lf_ch2=arr[:, 1], pos_ch2=arr[:, 2], clf_ch2=arr[:, 3],
+             lf_ch4=arr[:, 4], pos_ch4=arr[:, 5], clf_ch4=arr[:, 6])
     print("cached:", CACHE24.name)
 
 
 def detect_day(days, y, thr):
-    """3点連続で thr 超過する最初の day (なければ None)。NaN は不検出扱い。"""
+    """3点連続超過の警報確定時刻 = 3点目の day (なければ None)。NaN は不検出扱い。
+
+    注: 系列が閾値を最初に超えた時刻ではなく、3点目を見て警報が確定する時刻を返す
+    (保守的な報告、2026-07-27 レビューで系列開始時刻から変更)。"""
     over = np.where(np.isfinite(y), y > thr, False)
     for i in range(len(over) - 2):
         if over[i] and over[i + 1] and over[i + 2]:
-            return float(days[i])
+            return float(days[i + 2])
     return None
 
 
@@ -114,6 +130,60 @@ def fli_cluster_days(days, pos, m):
     return days[starts]
 
 
+def redesign_report(d, t_fail, z4, z24):
+    """レビュー指摘(2026-07-27)を受けた再現実装:
+    再設計1: FLI-v2 = 236±1bin アンカーの3点連続ロック AND 線/床ゲート(+5σ)。
+    再設計2: max-channel 帰属規則 = 自chの線/床が比較ch中最大のときのみ発報。
+    注意: いずれも回顧帯域(lookahead あり)の系列で評価。ch3 は未計算のため
+    比較は B1/B2/B4 の3ch。結果は本 run に限る観測であり一般化しない。"""
+    lf = {"B1": z4["retro_lf"], "B2": z24["lf_ch2"], "B4": z24["lf_ch4"]}
+    pos = {"B1": z4["retro_pos"], "B2": z24["pos_ch2"], "B4": z24["pos_ch4"]}
+    thr = {}
+    for c, y in lf.items():
+        b = np.isfinite(y) & (d < 3.0)
+        thr[c] = y[b].mean() + 5.0 * y[b].std()
+
+    print("\n== redesign 1: FLI-v2 (anchored 236+/-1bin run>=3 AND lf>+5sigma) ==")
+    for c in ("B1", "B2", "B4"):
+        anchored = np.where(np.isfinite(pos[c]), np.abs(pos[c] - 236.0) <= 1.0, False)
+        runs = np.zeros(len(anchored), dtype=int)
+        r = 0
+        for i, a in enumerate(anchored):
+            r = r + 1 if a else 0
+            runs[i] = r
+        fire = (runs >= 3) & np.where(np.isfinite(lf[c]), lf[c] > thr[c], False)
+        if c == "B1":
+            idx = np.where(fire)[0]
+            td = float(d[idx[0]]) if idx.size else None
+            lead = t_fail - td if td is not None else float("nan")
+            print(f"  B1: confirm day {td:.3f}  lead {lead:.3f} d" if td is not None
+                  else "  B1: no detection")
+        else:
+            st = fire & ~np.concatenate([[False], fire[:-1]])
+            cd = d[st]
+            print(f"  {c}: clusters {int(st.sum())} (early<4.5d {int((cd < 4.5).sum())}"
+                  f" / late {int((cd >= 4.5).sum())})")
+
+    print("\n== redesign 2: max-channel attribution on env retro lf (k=5) ==")
+    stack = np.vstack([np.where(np.isfinite(lf[c]), lf[c], -np.inf) for c in ("B1", "B2", "B4")])
+    for ci, c in enumerate(("B1", "B2", "B4")):
+        y = lf[c]
+        over = np.where(np.isfinite(y), y > thr[c], False)
+        is_max = np.nanargmax(stack, axis=0) == ci
+        fire3 = over[:-2] & over[1:-1] & over[2:] & is_max[:-2] & is_max[1:-1] & is_max[2:]
+        if c == "B1":
+            idx = np.where(fire3)[0]
+            td = float(d[idx[0] + 2]) if idx.size else None
+            lead = t_fail - td if td is not None else float("nan")
+            print(f"  B1: confirm day {td:.3f}  lead {lead:.3f} d (unchanged by rule)" if td is not None
+                  else "  B1: no detection")
+        else:
+            st = fire3 & ~np.concatenate([[False], fire3[:-1]])
+            cd = d[: len(st)][st]
+            print(f"  {c}: clusters {int(st.sum())} (early {int((cd < 4.5).sum())}"
+                  f" / late {int((cd >= 4.5).sum())})")
+
+
 def main():
     z1 = np.load(ROOT / "data/c1_set2_indicators.npz")
     z4 = np.load(ROOT / "data/c4_set2_envtrend.npz")
@@ -132,7 +202,7 @@ def main():
         "RMS": (rms1, [("B2", z1["rms_ch2"]), ("B4", z1["rms_ch4"])], "no"),
         "kurtosis": (z1["kurt_ch1"], [("B2", z1["kurt_ch2"]), ("B4", z1["kurt_ch4"])], "no"),
         "env retro": (z4["retro_lf"], [("B2", z24["lf_ch2"]), ("B4", z24["lf_ch4"])], "YES"),
-        "env causal": (z4["causal_lf"], [("B2", z24["lf_ch2"]), ("B4", z24["lf_ch4"])], "no"),
+        "env causal": (z4["causal_lf"], [("B2", z24["clf_ch2"]), ("B4", z24["clf_ch4"])], "no"),
     }
 
     print("\n== k-sigma sweep: lead time [d] on B1 / false-alarm clusters on B2+B4 ==")
@@ -193,6 +263,8 @@ def main():
             emp = float(np.mean(b > mu + k * sd))
             gauss = {2: 2.28e-2, 3: 1.35e-3}[k]
             print(f"  {name:10s} P(x>mu+{k}sigma): empirical {emp:.4f} vs Gaussian {gauss:.4f}")
+
+    redesign_report(d, t_fail, z4, z24)
 
     colors = {"RMS": "#999999", "kurtosis": "#009E73", "env retro": "#D55E00", "env causal": "#0072B2"}
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5))

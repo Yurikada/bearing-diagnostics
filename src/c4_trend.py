@@ -97,7 +97,7 @@ def plot():
 
     ax = axes[0]
     ax.semilogy(d, z["retro_lf"], color="#D55E00", lw=0.9, label="retrospective band 3-6.5 kHz (lookahead)")
-    ax.semilogy(d, z["causal_lf"], color="#0072B2", lw=0.9, label="causal band (online kurtogram, median-5)")
+    ax.semilogy(d, z["causal_lf"], color="#0072B2", lw=0.9, label="causal band (band-kurtosis scan, median-5)")
     ax.axhline(1.0, color="#bbbbbb", lw=0.8, ls="--")
     ax.set_ylabel("BPFO line / floor")
     ax.legend(fontsize=8, frameon=False, loc="upper left")
