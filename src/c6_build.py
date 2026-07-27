@@ -120,7 +120,7 @@ scipy/numpy と突き合わせて検証した。2026-07 制作。</p>
 
 <h2>③ 学習の過程 — 外れた予想も記録する</h2>
 <p>各ステージで「測る前に予想を立ててから測る」を徹底した。<b>事前の予想・仮説は
-12件で、的中4・外れ8</b>(うち2件はエージェント側の誤りを学習者が計算で正したもの)。
+15件で、的中4・外れ11</b>(うち2件はエージェント側の誤りを学習者が計算で正したもの)。
 外れた予想は、原因の分析を通じて理解の修正につながった。</p>
 <table>
 <tr><th>事前の予想(測る前)</th><th>結果</th><th>外れから得られた知見</th></tr>
@@ -136,6 +136,9 @@ scipy/numpy と突き合わせて検証した。2026-07 制作。</p>
 <tr><td>内輪欠陥は BPFI ± f<sub>r</sub> 側帯を伴う</td><td><span class="won">的中</span></td><td>荷重域変調の幾何モデルが実データで閉じた</td></tr>
 <tr><td>fs=20.48kHz 採用(Readme の矛盾に対する判断)</td><td><span class="won">的中</span></td><td>櫛間隔 236Hz が離散仮説(20.48k: 231.7〜236.4 / 20k: 237.3〜242.1)を判別</td></tr>
 <tr><td>故障基準 rms&gt;10×ベースライン</td><td><span class="lost">不成立</span>(最大0.725g&lt;0.77g)</td><td>5×に開示付き改訂。評価パラメータの事後変更は必ず開示する</td></tr>
+<tr><td>Set1転移: B3内輪は BPFI 主線+側帯が明瞭に立つ(高確度)</td><td><span class="lost">外れ</span></td><td>線/床は Set2 の 1/10 以下。側帯分散・帯域スキャンの2故障源混同・センサ向きの仮説3本を残した(未検証)</td></tr>
+<tr><td>Set1転移: B4転動体の 2×BSF 検出確度は 20〜30%(出にくい)</td><td><span class="lost">外れ</span>(良い方向)</td><td>278〜279Hz の位置指紋が成立。事前確度と実測の対称反転</td></tr>
+<tr><td>301Hz 線は fr 実測で BPFI / 9×fr を判別できる</td><td><span class="lost">外れ</span></td><td>アンカー線の S/N 不足で判定不能。判別測定にも成立条件がある</td></tr>
 </table>
 
 <h3>降格した知見(主軸から外したが記録に値するもの)</h3>
@@ -197,6 +200,11 @@ RMS が先行した主因は物理ではなく、ベースライン変動係数 
 <p>Set2 で開発した検出器を、開発に使っていない Set1(34.5日・8ch・<b>B3内輪+B4転動体の
 2故障同時進行</b>)に適用した。事前の予想: B3 は BPFI 296.9Hz+側帯が明瞭に立つ(高確度)、
 B4 は 2×BSF 279.8Hz だが検出確度 20〜30%(CWRU の経験から)。</p>
+
+<figure><img src="{fig_c7}" alt="C7 Set1 trend">
+<figcaption>C7: Set1 の8ch時間領域トレンド。尖度(下段・対数)が B4(緑, day28)→B3(橙, day31.5)の順に
+先行し、RMS(上段)は day33.5 以降に急増 — Set2 と逆順。最終盤の B3 は尖度が数十から3〜8へ低下
+しながら RMS が 0.58g へ増大し、剥離全面化によるガウス化を示す。</figcaption></figure>
 <table>
 <tr><th>測定</th><th>結果</th><th>判定</th></tr>
 <tr><td>時間領域の順序</td><td>尖度が先行(Set2 と逆順)。ただし「感度=物理×ベースライン変動」の同一原理が、ギャップ・再起動で変動する Set1 の RMS ベースラインを通じて逆順まで説明する</td><td class="won">原理は転移</td></tr>
@@ -239,6 +247,7 @@ def main():
         fig_c3=img64("C3-cwru-envelope.png"),
         fig_c4=img64("C4-envelope-trend.png"),
         fig_c5=img64("C5-operating-curves.png"),
+        fig_c7=img64("C7-set1-trend.png"),
     )
     OUT.write_text(html, encoding="utf-8")
     INDEX.write_text(
