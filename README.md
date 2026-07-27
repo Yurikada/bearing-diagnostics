@@ -19,8 +19,8 @@
 | C2 | DFT/FFT・窓関数・Welch PSD 自前実装 ↔ numpy/scipy 照合 | ✅ |
 | C3 | エンベロープ解析(Hilbert)自前実装、CWRU 既知欠陥で照合 | ✅ |
 | C4 | 検証済み手法を IMS run-to-failure に適用、劣化開始検出 | ✅ |
-| C5 | 閾値設計と評価(検出リードタイム vs 誤報率) | 次 |
-| C6 | ケーススタディレポート(docs/casestudy.html) | — |
+| C5 | 閾値設計と評価(検出リードタイム vs 誤報率) | ✅ |
+| C6 | ケーススタディレポート(docs/casestudy.html) | 次 |
 
 ## 記録
 
