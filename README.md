@@ -1,5 +1,9 @@
 # bearing-diagnostics
 
+**入口:** [公開レポート](https://yurikada.github.io/bearing-diagnostics/) · [観測設計・データ出典](docs/C0-observation.md) · [独立runへの転移](docs/C7-transfer.md)
+
+成果を読むだけならデータ取得は不要です。処理を再実行するときは、下記の公開データと各ステージのキャッシュを用意します。
+
 転がり軸受の振動データを使った異常検知・診断のケーススタディ。
 
 ## 最終ケーススタディ
